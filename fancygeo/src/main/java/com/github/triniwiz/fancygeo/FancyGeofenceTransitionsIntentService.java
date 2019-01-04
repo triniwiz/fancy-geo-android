@@ -1,7 +1,6 @@
 package com.github.triniwiz.fancygeo;
 
 import android.app.IntentService;
-import android.app.PendingIntent;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.support.annotation.Nullable;
@@ -15,7 +14,7 @@ import java.util.List;
 
 
 /**
- * Created by triniwiz on 12/13/18
+ * Created by Osei Fortune on 12/13/18
  */
 public class FancyGeofenceTransitionsIntentService extends IntentService {
 
@@ -43,37 +42,31 @@ public class FancyGeofenceTransitionsIntentService extends IntentService {
         SharedPreferences preferences = getApplicationContext().getSharedPreferences(FancyGeo.GEO_LOCATION_DATA, 0);
         switch (geofenceTransition) {
             case Geofence.GEOFENCE_TRANSITION_ENTER:
-                Log.d(FancyGeo.TAG, "GEOFENCE_TRANSITION_ENTER");
                 if (triggeringGeofences != null) {
                     for (Geofence fence : triggeringGeofences) {
                         String id = fence.getRequestId();
                         String request = preferences.getString(id, "");
-                        String type =   FancyGeo.getType(request);
+                        String type = FancyGeo.getType(request);
                         if (!request.isEmpty() && type.equals("circle")) {
                             FancyGeo.CircleFence geoFence = gson.fromJson(request, FancyGeo.CircleFence.class);
-                            FancyGeoNotifications.sendNotification(geoFence.getNotification());
+                            FancyGeoNotifications.sendNotification(geoFence.getNotification(), "enter");
                         }
                     }
                 }
                 break;
             case Geofence.GEOFENCE_TRANSITION_DWELL:
-                Log.d(FancyGeo.TAG, "GEOFENCE_TRANSITION_DWELL");
+                // TODO
                 break;
             case Geofence.GEOFENCE_TRANSITION_EXIT:
-                Log.d(FancyGeo.TAG, "GEOFENCE_TRANSITION_EXIT");
                 if (triggeringGeofences != null) {
                     for (Geofence fence : triggeringGeofences) {
                         String id = fence.getRequestId();
                         String request = preferences.getString(id, "");
-                        Log.d(FancyGeo.TAG, "request: " + FancyGeo.getType(request));
-                        Log.d(FancyGeo.TAG, "requestId : " + id);
                         String type = FancyGeo.getType(request);
-                        Log.d(FancyGeo.TAG, "isCircle: " + String.valueOf(type.equals("circle")));
                         if (!request.isEmpty() && type.equals("circle")) {
                             FancyGeo.CircleFence geoFence = gson.fromJson(request, FancyGeo.CircleFence.class);
-                            FancyGeoNotifications.sendNotification(geoFence.getNotification());
+                            FancyGeoNotifications.sendNotification(geoFence.getNotification(), "exit");
                         }
-
                     }
                 }
                 break;

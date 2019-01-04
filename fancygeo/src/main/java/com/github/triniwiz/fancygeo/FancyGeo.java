@@ -3,6 +3,7 @@ package com.github.triniwiz.fancygeo;
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.Application;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
@@ -25,7 +26,6 @@ import com.google.android.gms.location.LocationCallback;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
-import com.google.android.gms.tasks.OnCanceledListener;
 import com.google.android.gms.tasks.OnFailureListener;
 import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.gms.tasks.Task;
@@ -41,29 +41,41 @@ import static com.google.android.gms.location.Geofence.GEOFENCE_TRANSITION_EXIT;
 import static com.google.android.gms.location.Geofence.NEVER_EXPIRE;
 
 /**
- * Created by triniwiz on 12/13/18
+ * Created by Osei Fortune on 12/13/18
  */
 public class FancyGeo {
     static final String TAG = "triniwiz.fancygeo";
     static final String GEO_LOCATION_DATA = "FANCY_GEO_LOCATION_DATA";
     public static final int GEO_LOCATION_PERMISSIONS_REQUEST = 138;
     private static final String[] GEO_LOCATION_PERMISSIONS = new String[]{Manifest.permission.ACCESS_FINE_LOCATION};
+    public static final String GEO_TRANSITION_TYPE = "TRANSITION_TYPE";
     private FusedLocationProviderClient mFusedLocationClient;
 
     private GeofencingClient mGeofencingClient;
     private Context ctx;
-    private PendingIntent mGeofencePendingIntent;
+    private static PendingIntent mGeofencePendingIntent;
     private SharedPreferences sharedPreferences;
     private static Gson gson;
+    static boolean isActive;
+    private static String cachedData;
 
-    public static interface FenceListener {
-        public void onCreate(String id);
+    private static NotificationsListener onMessageReceivedListener;
+
+    public static interface Callback {
+        public void onSuccess();
 
         public void onFail(Exception e);
+    }
 
-        public void onRemove(String id);
+    public static interface FenceCallback {
+        public void onSuccess(String id);
 
-        public void onExpire(String id);
+        public void onFail(Exception e);
+    }
+
+    public static void init(Application application) {
+        FancyGeoLifeCycle.registerCallbacks(application);
+        FancyGeoNotifications.init(application.getApplicationContext());
     }
 
     public static Gson getGsonInstance() {
@@ -87,6 +99,11 @@ public class FancyGeo {
         private int id;
         private String title;
         private String body;
+        private String requestId;
+
+        public String getRequestId() {
+            return requestId;
+        }
 
         public String getBody() {
             return body;
@@ -111,9 +128,40 @@ public class FancyGeo {
         public String getTitle() {
             return title;
         }
+
+        void setRequestId(String requestId) {
+            this.requestId = requestId;
+        }
     }
 
+    public static interface NotificationsListener {
+        public void onSuccess(String data);
+
+        public void onError(Exception e);
+    }
+
+    public static void setOnMessageReceivedListener(NotificationsListener listener) {
+        onMessageReceivedListener = listener;
+
+        if (cachedData != null) {
+            executeOnMessageReceivedListener(cachedData);
+            cachedData = null;
+        }
+    }
+
+    public static void executeOnMessageReceivedListener(String data) {
+        if (onMessageReceivedListener != null) {
+            Log.d(TAG, "Sending message to client");
+            onMessageReceivedListener.onSuccess(data);
+        } else {
+            Log.d(TAG, "No callback function - caching the data for later retrieval.");
+            cachedData = data;
+        }
+    }
+
+
     public static class FenceHttp {
+        // TODO
     }
 
     public static abstract class FenceShape {
@@ -165,9 +213,10 @@ public class FancyGeo {
             this.notification = notification;
         }
 
-        static public CircleFence fromString(String json){
+        static public CircleFence fromString(String json) {
             return getGsonInstance().fromJson(json, CircleFence.class);
         }
+
         @Override
         public FenceTransition getTransition() {
             return transition;
@@ -356,18 +405,24 @@ public class FancyGeo {
         return list;
     }
 
-    public void removeAllFences() {
+    public void removeAllFences(@Nullable final Callback callback) {
         Task<Void> removeTask = mGeofencingClient.removeGeofences(getGeofencePendingIntent());
         removeTask.addOnFailureListener(new OnFailureListener() {
             @Override
             public void onFailure(@NonNull Exception e) {
-
+                if (callback != null) {
+                    callback.onFail(e);
+                }
             }
         });
-        removeTask.addOnCanceledListener(new OnCanceledListener() {
+
+        removeTask.addOnSuccessListener(new OnSuccessListener<Void>() {
             @Override
-            public void onCanceled() {
+            public void onSuccess(Void aVoid) {
                 sharedPreferences.edit().clear().apply();
+                if (callback != null) {
+                    callback.onSuccess();
+                }
             }
         });
     }
@@ -418,7 +473,7 @@ public class FancyGeo {
     }
 
     @SuppressLint("MissingPermission")
-    public void createFenceCircle(final @Nullable String id, final FenceTransition transition, final int loiteringDelay, final double[] points, final double radius, @Nullable final FenceNotification notification, @Nullable final FenceListener listener) {
+    public void createFenceCircle(final @Nullable String id, final FenceTransition transition, final int loiteringDelay, final double[] points, final double radius, @Nullable final FenceNotification notification, @Nullable final FenceCallback callback) {
         final String requestId = id == null ? UUID.randomUUID().toString() : id;
         GeofencingRequest.Builder builder = new GeofencingRequest.Builder();
         Geofence.Builder fenceBuilder = new Geofence.Builder();
@@ -465,7 +520,6 @@ public class FancyGeo {
             return;
         }
         GeofencingRequest request = builder.build();
-        Log.d(TAG, request.toString());
         Task<Void> addTask = mGeofencingClient.addGeofences(request, getGeofencePendingIntent());
         addTask.addOnSuccessListener(new OnSuccessListener<Void>() {
             @SuppressLint("ApplySharedPref")
@@ -473,48 +527,61 @@ public class FancyGeo {
             public void onSuccess(Void aVoid) {
                 CircleFence circleFence;
                 if (notification != null) {
+                    notification.setRequestId(requestId);
                     circleFence = new CircleFence(requestId, transition, points, radius, loiteringDelay, notification);
                 } else {
                     circleFence = new CircleFence(requestId, transition, points, radius, loiteringDelay);
                 }
                 sharedPreferences.edit().putString(requestId, circleFence.toJson()).commit();
-                Log.d(TAG, "SUCCESS");
-                if (listener != null) {
-                    listener.onCreate(requestId);
+                if (callback != null) {
+                    callback.onSuccess(requestId);
                 }
             }
         });
         addTask.addOnFailureListener(new OnFailureListener() {
             @Override
             public void onFailure(@NonNull Exception e) {
-                Log.d(TAG, "FAILURE : " + e.getLocalizedMessage() + "addOnFailureListener");
-                if (listener != null) {
-                    listener.onFail(e);
+                if (callback != null) {
+                    callback.onFail(e);
                 }
             }
         });
     }
 
-    public void removeFence(final String id, final @Nullable FenceListener listener) {
-        List<String> list = new ArrayList<String>();
+    public void removeFence(final String id, final @Nullable Callback callback) {
+        List<String> list = new ArrayList<>();
         list.add(id);
         Task<Void> removeTask = mGeofencingClient.removeGeofences(list);
         removeTask.addOnFailureListener(new OnFailureListener() {
             @Override
             public void onFailure(@NonNull Exception e) {
-                if (listener != null) {
-                    listener.onFail(e);
+                if (callback != null) {
+                   callback.onFail(e);
                 }
             }
         });
 
-        removeTask.addOnCanceledListener(new OnCanceledListener() {
+        removeTask.addOnSuccessListener(new OnSuccessListener<Void>() {
             @Override
-            public void onCanceled() {
-                if (listener != null) {
-                    listener.onRemove(id);
+            public void onSuccess(Void aVoid) {
+                if (callback != null) {
+                    callback.onSuccess();
                 }
             }
         });
+    }
+
+    public FenceShape getFence(String id) {
+        String fence = sharedPreferences.getString(id, "");
+        if (fence.equals("")) {
+            return null;
+        }
+        String type = getType(fence);
+        switch (type) {
+            case "circle":
+                return getGsonInstance().fromJson(fence, CircleFence.class);
+            default:
+                return null;
+        }
     }
 }

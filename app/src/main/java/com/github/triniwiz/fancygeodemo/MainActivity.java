@@ -2,6 +2,7 @@ package com.github.triniwiz.fancygeodemo;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.location.Location;
 import android.support.annotation.NonNull;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
@@ -18,19 +19,38 @@ import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.CameraPosition;
 import com.google.android.gms.maps.model.CircleOptions;
 import com.google.android.gms.maps.model.LatLng;
+import com.google.gson.Gson;
 
 import java.util.List;
 
 public class MainActivity extends AppCompatActivity implements OnMapReadyCallback {
     private SupportMapFragment mapFragment;
     private FancyGeo fancyGeo;
+    private Gson gson;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        gson = new Gson();
         fancyGeo = new FancyGeo(this);
         setContentView(R.layout.activity_main);
-        FancyGeoNotifications.init(this);
+        FancyGeo.init(getApplication());
+        FancyGeo.setOnMessageReceivedListener(new FancyGeo.NotificationsListener() {
+            @Override
+            public void onSuccess(String data) {
+                FancyGeo.FenceNotification notification = gson.fromJson(data, FancyGeo.FenceNotification.class);
+                FancyGeo.FenceShape fence = fancyGeo.getFence(notification.getRequestId());
+                if (fence != null && fence.getType().equals("circle")) {
+                    FancyGeo.CircleFence circleFence = (FancyGeo.CircleFence) fence;
+                    Log.d("co.test", "OnSuccess Test -> " + circleFence.getId());
+                }
+            }
+
+            @Override
+            public void onError(Exception e) {
+
+            }
+        });
         mapFragment = (SupportMapFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.map);
         if (mapFragment != null) {
@@ -73,9 +93,9 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                     notification.setId(1);
                     notification.setBody("Some Title");
                     notification.setTitle("SomeBody");
-                    fancyGeo.createFenceCircle(null, FancyGeo.FenceTransition.ENTER_EXIT, 0, points, 1000, notification, new FancyGeo.FenceListener() {
+                    fancyGeo.createFenceCircle(null, FancyGeo.FenceTransition.ENTER_EXIT, 0, points, 1000, notification, new FancyGeo.FenceCallback() {
                         @Override
-                        public void onCreate(String id) {
+                        public void onSuccess(String id) {
                             Log.d("triniwiz.fancydemo", "Created: " + id);
                             CircleOptions circleOptions = new CircleOptions();
                             circleOptions.center(latLng);
@@ -85,16 +105,6 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
                         @Override
                         public void onFail(Exception e) {
-
-                        }
-
-                        @Override
-                        public void onRemove(String id) {
-
-                        }
-
-                        @Override
-                        public void onExpire(String id) {
 
                         }
                     });

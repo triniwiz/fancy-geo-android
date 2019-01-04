@@ -1,6 +1,4 @@
 package com.github.triniwiz.fancygeo;
-
-import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -10,14 +8,12 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
+import android.support.annotation.Nullable;
 import android.support.v4.app.NotificationCompat;
 import android.support.v4.app.NotificationManagerCompat;
-import android.util.Log;
-
-import com.google.android.gms.tasks.Task;
 
 /**
- * Created by triniwiz on 12/22/18
+ * Created by Osei Fortune on 12/22/18
  */
 public class FancyGeoNotifications extends ContextWrapper {
     public final static String CHANNEL_NAME_DEFAULT = "Fancy Geo Notifications";
@@ -57,9 +53,8 @@ public class FancyGeoNotifications extends ContextWrapper {
             NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
             if (manager != null) {
                 NotificationChannel channel = manager.getNotificationChannel(getChannelName());
-                Log.d(FancyGeo.TAG, "Channel Name: -> " + channel);
                 if (channel == null) {
-                    NotificationChannel newChannel = new NotificationChannel(CHANNEL_ID, getChannelName(), NotificationManager.IMPORTANCE_DEFAULT);
+                    NotificationChannel newChannel = new NotificationChannel(CHANNEL_ID, getChannelName(), NotificationManager.IMPORTANCE_HIGH);
                     manager.createNotificationChannel(newChannel);
                 }
             }
@@ -70,21 +65,20 @@ public class FancyGeoNotifications extends ContextWrapper {
         PackageManager pm = getPackageManager();
         Intent launchIntent = pm.getLaunchIntentForPackage(getApplicationContext().getPackageName());
         if (launchIntent != null) {
-            Log.d(FancyGeo.TAG, "starting activity for package: " + getApplicationContext().getPackageName());
             launchIntent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
             startActivity(launchIntent);
         }
     }
 
-
     public static void sendNotification(FancyGeo.FenceNotification notification) {
+        sendNotification(notification, null);
+    }
+
+    public static void sendNotification(FancyGeo.FenceNotification notification, @Nullable String transitionType) {
         FancyGeoNotifications notifications = getInstance();
-        Log.d(FancyGeo.TAG, "sendNotification");
         if (notifications != null) {
-            Log.d(FancyGeo.TAG, "got Instance");
             NotificationCompat.Builder builder = Build.VERSION.SDK_INT >= 26 ? new NotificationCompat.Builder(notifications.getApplicationContext(), CHANNEL_ID) : new NotificationCompat.Builder(notifications.getApplicationContext());
 
-            Log.d(FancyGeo.TAG, "NOTIFICATION: -> " + notification);
             String packageName = notifications.getApplicationInfo().packageName;
 
             int notify = notifications.getResources().getIdentifier("ic_stat_notify", "drawable", packageName);
@@ -98,9 +92,13 @@ public class FancyGeoNotifications extends ContextWrapper {
             } else {
                 icon = appIcon;
             }
-            Log.d(FancyGeo.TAG, "Icon " + icon);
+
             Intent intent = new Intent(notifications.getApplicationContext(), FancyGeoActionReceiver.class);
             intent.putExtra(GEO_NOTIFICATION_ID, notification.getId());
+
+            if (transitionType != null) {
+                intent.putExtra(FancyGeo.GEO_TRANSITION_TYPE, transitionType);
+            }
             builder.setContentTitle(notification.getTitle())
                     .setSmallIcon(icon)
                     .setContentText(notification.getBody())
