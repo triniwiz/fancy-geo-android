@@ -32,6 +32,7 @@ import com.google.android.gms.tasks.Task;
 import com.google.gson.Gson;
 
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 import java.util.UUID;
 
@@ -50,7 +51,10 @@ public class FancyGeo {
     private static final String[] GEO_LOCATION_PERMISSIONS = new String[]{Manifest.permission.ACCESS_FINE_LOCATION};
     public static final String GEO_TRANSITION_TYPE = "TRANSITION_TYPE";
     private FusedLocationProviderClient mFusedLocationClient;
-
+    public static int defaultGetLocationTimeout = 5 * 60 * 1000; // 5 minutes
+    public static double minRangeUpdate = 0.1; // 0 meters
+    public static int minTimeUpdate = 1 * 60 * 1000; // 1 minute
+    public static int fastestTimeUpdate = 5 * 1000; // 5 secs
     private GeofencingClient mGeofencingClient;
     private Context ctx;
     private static PendingIntent mGeofencePendingIntent;
@@ -61,16 +65,16 @@ public class FancyGeo {
 
     private static NotificationsListener onMessageReceivedListener;
 
-    public static interface Callback {
-        public void onSuccess();
+    public interface Callback {
+        void onSuccess();
 
-        public void onFail(Exception e);
+        void onFail(Exception e);
     }
 
-    public static interface FenceCallback {
-        public void onSuccess(String id);
+    public interface FenceCallback {
+        void onSuccess(String id);
 
-        public void onFail(Exception e);
+        void onFail(Exception e);
     }
 
     public static void init(Application application) {
@@ -85,7 +89,7 @@ public class FancyGeo {
         return gson;
     }
 
-    public static enum FenceTransition {
+    public enum FenceTransition {
         ENTER,
         DWELL,
         EXIT,
@@ -134,10 +138,10 @@ public class FancyGeo {
         }
     }
 
-    public static interface NotificationsListener {
-        public void onSuccess(String data);
+    public interface NotificationsListener {
+        void onSuccess(String data);
 
-        public void onError(Exception e);
+        void onError(Exception e);
     }
 
     public static void setOnMessageReceivedListener(NotificationsListener listener) {
@@ -307,6 +311,39 @@ public class FancyGeo {
         return true;
     }
 
+
+    public static class FancyLocationOptions {
+        public int desiredAccuracy;
+
+
+        public int updateDistance;
+
+
+        public int updateTime;
+
+
+        public int minimumUpdateTime;
+
+
+        public int maximumAge;
+
+
+        public int timeout;
+
+        public FancyLocationOptions() {
+        }
+    }
+
+    public enum FancyLocationAccuracy {
+        any(300),
+        high(3);
+        private final int accuracy;
+
+        FancyLocationAccuracy(int accuracy) {
+            this.accuracy = accuracy;
+        }
+    }
+
     public static class FancyLocation {
         private Location location;
         double latitude;
@@ -344,28 +381,34 @@ public class FancyGeo {
         }
     }
 
-    public static interface FancyGeoCurrentLocationListener {
-        public void onLocation(FancyLocation location);
+    public interface FancyGeoCurrentLocationListener {
+        void onLocation(FancyLocation location);
 
-        public void onLocationError(Exception exception);
+        void onLocationError(String error);
     }
 
+
     @SuppressLint("MissingPermission")
-    public void getCurrentLocation(final FancyGeoCurrentLocationListener listener) {
-        final Task<Location> lastLocation = mFusedLocationClient.getLastLocation();
+    public void getCurrentLocation(@Nullable final FancyLocationOptions options, final FancyGeoCurrentLocationListener listener) {
         final LocationCallback callback = new LocationCallback() {
             @Override
             public void onLocationResult(LocationResult locationResult) {
-                if (locationResult == null) {
-                    return;
+                if (locationResult != null) {
+                    FancyLocation loc = FancyLocation.fromLocation(locationResult.getLastLocation());
+                    int maxAge = options != null ? options.maximumAge : -1;
+                    if (maxAge > -1) {
+                        if (loc.timestamp + maxAge > new Date().getTime()) {
+                            listener.onLocation(loc);
+                        } else {
+                            listener.onLocationError("Last known location too old!");
+                        }
+                    } else {
+                        listener.onLocation(loc);
+                    }
+                } else {
+                    listener.onLocationError("There is no last known location!");
                 }
 
-                for (Location location : locationResult.getLocations()) {
-                    FancyLocation fancyLocation = FancyLocation.fromLocation(location);
-                    //if(fancyLocation)
-                    listener.onLocation(fancyLocation);
-                    break;
-                }
             }
 
             @Override
@@ -373,27 +416,51 @@ public class FancyGeo {
 
             }
         };
-        lastLocation.addOnSuccessListener(new OnSuccessListener<Location>() {
-            @Override
-            public void onSuccess(Location location) {
-                if (location != null) {
-                    listener.onLocation(FancyLocation.fromLocation(location));
-                } else {
-                    LocationRequest request = new LocationRequest();
-                    request.setInterval(60000);
-                    request.setFastestInterval(5000);
-                    request.setPriority(LocationRequest.PRIORITY_LOW_POWER);
-                    mFusedLocationClient.requestLocationUpdates(request, callback, null);
+        if (options != null && options.timeout == 0) {
+            final Task<Location> lastLocation = mFusedLocationClient.getLastLocation();
+            lastLocation.addOnSuccessListener(new OnSuccessListener<Location>() {
+                @Override
+                public void onSuccess(Location location) {
+                    if (location != null) {
+                        FancyLocation loc = FancyLocation.fromLocation(location);
+                        int maxAge = options != null ? options.maximumAge : -1;
+                        if (maxAge > -1) {
+                            if (loc.timestamp + maxAge > new Date().getTime()) {
+                                listener.onLocation(loc);
+                            } else {
+                                listener.onLocationError("Last known location too old!");
+                            }
+                        } else {
+                            listener.onLocation(loc);
+                        }
+                    } else {
+                        listener.onLocationError("There is no last known location!");
+                    }
                 }
-            }
-        });
+            });
 
-        lastLocation.addOnFailureListener(new OnFailureListener() {
-            @Override
-            public void onFailure(@NonNull Exception e) {
-                listener.onLocationError(e);
+            lastLocation.addOnFailureListener(new OnFailureListener() {
+                @Override
+                public void onFailure(@NonNull Exception e) {
+                    listener.onLocationError(e.getMessage());
+                }
+            });
+        } else {
+            LocationRequest request = new LocationRequest();
+            int updateTime = options != null ? options.updateTime : minTimeUpdate;
+            request.setInterval(updateTime);
+            int minimumUpdateTime = options != null ? options.minimumUpdateTime : Math.min(updateTime, fastestTimeUpdate);
+            request.setFastestInterval(minimumUpdateTime);
+            if (options != null) {
+                request.setSmallestDisplacement(options.updateDistance);
             }
-        });
+            if (options != null && options.desiredAccuracy == FancyLocationAccuracy.high.accuracy) {
+                request.setPriority(com.google.android.gms.location.LocationRequest.PRIORITY_HIGH_ACCURACY);
+            } else {
+                request.setPriority(com.google.android.gms.location.LocationRequest.PRIORITY_BALANCED_POWER_ACCURACY);
+            }
+            mFusedLocationClient.requestLocationUpdates(request, callback, null);
+        }
     }
 
     public ArrayList<String> getAllFences() {
@@ -556,7 +623,7 @@ public class FancyGeo {
             @Override
             public void onFailure(@NonNull Exception e) {
                 if (callback != null) {
-                   callback.onFail(e);
+                    callback.onFail(e);
                 }
             }
         });
